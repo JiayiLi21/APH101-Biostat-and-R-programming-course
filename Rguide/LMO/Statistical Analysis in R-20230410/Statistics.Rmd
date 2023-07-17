@@ -1,0 +1,673 @@
+---
+title: "Statistical Analysis in R"
+author: "APH101 Daiyun Huang April 10"
+output:
+  ioslides_presentation:
+    css: ./styles.css
+    widescreen: yes
+  beamer_presentation: default
+  slidy_presentation: default
+---
+
+```{r knit-setup, include=FALSE}
+library(knitr)
+opts_chunk$set(echo = TRUE, 
+               message = FALSE, 
+               warning = FALSE,
+               fig.height = 4,
+               fig.width = 7, 
+               comment = "")
+```
+
+## Acknowledgement
+
+Thanks to Dr. John Muschelli and Dr. Andrew Jaffe for sharing their course materials online. This material is prepared based on their work.
+
+## Statistics
+
+Now we are going to cover how to perform a variety of basic statistical tests in R. 
+
+* Correlation
+* T-tests/Rank-sum tests
+* ANOVA
+* Linear Regression
+* Logistic Regression
+* Chi-squared
+* Fisher's Exact Test
+
+## Correlation 
+
+`cor()` performs correlation in R
+
+```
+cor(x, y = NULL, use = "everything",
+    method = c("pearson", "kendall", "spearman"))
+```
+
+Like other functions, if there are NAs, you get NA as the result. But if you specify use only the complete observations, then it will give you correlation on the non-missing data. 
+
+```{r, message = FALSE}
+library(readr)
+circ <- read_csv("Charm_City_Circulator_Ridership.csv")
+circ <- as.data.frame(circ)
+cor(circ$orangeAverage, circ$purpleAverage, use="complete.obs")
+```
+
+## Glance at the data {.smaller}
+ 
+```{r}
+head(circ)
+```
+
+## Correlation between columns
+
+You can also get the correlation between columns
+
+```{r}
+library(dplyr)
+# select columns ends with 'Average'
+avgs = circ %>% select(ends_with("Average")) 
+avgs_cor = cor(avgs, use = "complete.obs")
+# round the results to 3 digits
+round(avgs_cor, 3) 
+```
+## Correlation between two dataframes
+
+Or between columns of two dataframes, column by column.
+
+```{r}
+# Create two dataframes to mimic the correlation between dfs 
+op = avgs %>% select(orangeAverage, purpleAverage)
+gb = avgs %>% select(greenAverage, bannerAverage)
+round(cor(op, gb, use = "complete.obs"), 3)
+```
+
+## Correlation test
+
+You can also use `cor.test()` to test for whether correlation is significant (i.e., non-zero). Note that linear regression may be better, especially if you want to regress out other confounders.
+
+```{r}
+ct = cor.test(circ$orangeAverage, circ$purpleAverage, 
+              use = "complete.obs")
+ct
+```
+
+
+## Extract results from object 
+
+For many of these testing result objects, you can extract specific slots/results as numbers, as the ct object is just a list.
+
+```{r}
+str(ct)
+```
+
+## Extract results from object 
+
+```{r}
+names(ct)
+```
+```{r}
+ct$statistic
+```
+
+```{r}
+ct$p.value
+```
+
+## Tidy the outputs
+
+The `broom` package has a `tidy` function that puts most objects into `data.frames` so that they are easily manipulated:
+
+```{r}
+library(broom)
+tidy_ct = tidy(ct)
+tidy_ct %>% as.data.frame()
+```
+
+## Add correlation to plot 
+
+Note that you can add the correlation to a plot, via the `annotate`
+
+```{r, fig.height=4, fig.width=4}
+library(ggplot2)
+txt = paste0("r=", signif(ct$estimate,3))
+q = qplot(data = circ, x = orangeAverage, y = purpleAverage)
+q + annotate("text", x = 4000, y = 8000, label = txt, size = 5)
+```
+
+
+## T-tests
+
+The T-test is performed using the `t.test()` function, which essentially tests for the difference in means of a variable between two groups. It can perform a one sample t-test, two sample t-test, and a paired t-test.
+
+In this syntax, x and y are the column of data for each group. It performs a two sample t-test assuming unequal variances.
+
+```{r}
+tt = t.test(circ$orangeAverage, circ$purpleAverage)
+tt
+```
+
+## T-tests
+
+`t.test` saves a lot of information: the difference in means `estimate`, confidence interval for the difference `conf.int`, the p-value `p.value`, etc.
+
+```{r}
+names(tt)
+```
+
+```{r}
+tidy(tt) %>% as.data.frame()
+```
+
+## T-tests
+
+To perform a two-sample t-test assuming equal variances, set `var.equal = TRUE`.
+
+```{r}
+t.test(circ$orangeAverage, circ$purpleAverage, var.equal = TRUE)
+```
+
+## T-tests
+
+Using `t.test` treats the data as independent. Realistically, This data is actually matched by date and should be treated as a paired t-test. The `paired = TRUE` argument to do a paired test
+
+```{r}
+t.test(circ$orangeAverage, circ$purpleAverage, paired = TRUE)
+```
+
+## T-tests
+
+You can also use the ‘formula’ notation. In this syntax, it is `y ~ x`, where `x` is a factor with 2 levels or a binary variable and `y` is a vector of the same length.
+
+```{r}
+library(tidyr)
+op = circ %>% 
+  select(date, orangeAverage, purpleAverage) %>% 
+  gather(key = line, value = avg, -date)
+op$date <- as.Date.character(op$date)
+op$line <- as.factor(op$line)
+summary(op)
+```
+
+## T-tests {.smaller}
+
+```{r}
+t.test(avg ~ line, data = op)
+```
+
+## Wilcoxon Rank-Sum Tests
+
+Nonparametric analog to t-test (testing medians):
+
+```{r}
+wilcox.test(circ$orangeAverage, circ$purpleAverage)
+# or
+# wilcox.test(avg ~ line, data = op)
+```
+
+## Wilcoxon Signed Rank Test
+
+```{r}
+wilcox.test(circ$orangeAverage, circ$purpleAverage, paired = TRUE)
+```
+
+## One-way ANOVA
+
+You can fit an ANOVA model using the `aov()` function, using the formula notation `y ~ x`, where
+
+* `y` is your outcome
+* `x` is your predictor
+
+```{r}
+opg = circ %>% 
+  select(date, orangeAverage, purpleAverage, greenAverage) %>% 
+  gather(key = line, value = avg, -date)
+opg$date <- as.Date.character(opg$date)
+opg$line <- as.factor(opg$line)
+summary(opg)
+```
+
+## One-way ANOVA
+
+```{r}
+res.aov = aov(avg ~ line, data = opg)
+summary(res.aov)
+```
+
+## Kruskal Wallis Test
+
+```{r}
+kruskal.test(avg ~ line, data = opg)
+```
+
+## Two-way ANOVA
+
+The two-way ANOVA test is used to compare the effects of two grouping variables (A and B) on a response variable at the same time.
+
+The balanced design occurs when the sample sizes within cells are equal. The conventional two-way ANOVA test can be used in this circumstance.
+
+Hypotheses:
+
+* $H_0$: There is no difference in factor A’s means. $H_1$: the means are not equal
+* $H_0$: There is no difference in factor B’s means. $H_1$: the means are not equal
+* $H_0$: Factors A and B do not interact. $H_1$: A and B have an interaction
+
+Like all ANOVA tests, two-way ANOVA assumes that the observations within each cell are normally distributed with equal variances.
+
+## Two-way ANOVA
+
+We’ll use the built-in R data set ToothGrowth for this. It includes information from a study on the effects of vitamin C on tooth growth in Guinea pigs.
+
+The trial used 60 pigs who were given one of three vitamin C dose levels (0.5, 1, or 2 mg/day) via one of two administration routes (orange juice or ascorbic acid) (a form of vitamin C and coded as VC).
+
+```{r}
+data <- ToothGrowth
+dplyr::sample_n(data, 5)
+```
+
+## Two-way ANOVA
+
+R treats "dose" as a numeric variable based on the output. As follows, we’ll transform it to a factor variable (i.e., grouping variable).
+
+Recode the levels after converting the dose to a factor.
+
+```{r}
+data$dose <- factor(data$dose,
+                    levels = c(0.5, 1, 2),
+                    labels = c("D0.5", "D1", "D2"))
+str(data)
+```
+## Two-way ANOVA
+
+Make frequency tables by:
+
+```{r}
+table(data$supp,data$dose)
+```
+
+We have 2 X 3 design cells, each with 10 individuals and the factors supp and dose. We have a well-balanced design here.
+
+## Two-way ANOVA
+
+`ggpubr` provides some easy-to-use functions for creating and customizing `ggplot2`- based publication ready plots.
+
+```{r, fig.height=4, fig.width=4}
+library("ggpubr")
+ggboxplot(data, x = "dose", y = "len", color = "supp",
+          palette = c("#00AFBB", "#E7B800"))
+```
+
+## Two-way ANOVA
+
+We’re curious if tooth length is affected by supp and dose.
+
+```{r}
+res.aov2 <- aov(len ~ supp + dose, data = data)
+summary(res.aov2)
+```
+The columns Pr(>F) in the output corresponding to the p-value of the test.
+
+## Two-way ANOVA
+
+The above-fitted model is not referred to as an additive model. It is presumptively assumed that the two-factor variables are unrelated.
+
+Replace the plus symbol (+) with an asterisk (*) if you think these two variables will interact to create a synergistic effect.
+
+```{r}
+res.aov3 <- aov(len ~ supp * dose, data = data)
+summary(res.aov3)
+```
+
+The two primary effects (supplement and dose), as well as their interaction, are statistically significant.
+
+## Interpret the outcomes
+
+Based on the p-values and a significance level of 0.05, you may deduce the following from the ANOVA results:
+
+Supp has a p-value < 0.05 (significant), indicating that varied levels of supp are associated with varying tooth lengths.
+
+The dose p-value < 0.05 (significant), indicating that differing treatment levels are linked with substantial differences in tooth length.
+
+The interaction between supp*dose has a p-value of 0.02 (significant), indicating that the connection between dose and tooth length is influenced by the supp technique.
+
+## Multiple Tukey pairwise comparisons
+
+A significant p-value in an ANOVA test shows that some of the group means differ, but we don’t know which pairings of groups differ.
+
+We can compute Tukey HSD (Tukey Honest Significant Differences, R function: `TukeyHSD()`) for doing numerous pairwise comparisons between the means of groups because the ANOVA test is significant.
+
+```{r}
+TukeyHSD(res.aov3, which = "dose")
+```
+## Multiple Tukey pairwise comparisons
+
+`diff`: the difference between the two groups' means; `lwr`, `upr`: bottom and upper-end points of the confidence interval at 95 percent (default); `p adj`: p-value after multiple comparisons adjustment.
+
+The output shows that all pairwise comparisons with an adjusted p-value of 0.05 are significant.
+
+We don’t need to run the test on the "supp" variable because it only has two levels, both of which have been shown to be substantially different using the ANOVA test.
+
+## T-test on pairs
+
+Pairwise comparisons between group levels with various testing corrections can also be calculated using the `pairwise.t.test()` function.
+
+```{r}
+pairwise.t.test(data$len, data$dose,
+                p.adjust.method = "BH")
+```
+
+## Homogeneity of variances
+The validity of ANOVA assumptions should be checked.
+
+```{r, fig.height=4, fig.width=4}
+plot(res.aov3, 1)
+```
+
+Outliers are found at points 23, 32, and 49.
+
+## Homogeneity of variances
+Check the homogeneity of variances with Levene’s test. The `leveneTest()` method (from the `car` package) will be used:
+
+```{r, message = FALSE}
+library(car)
+leveneTest(len ~ supp*dose, data = data)
+```
+
+The p-value is not less than the significance level of 0.05, as seen in the output above. This indicates that there is no indication that the variance across groups is statistically significant.
+
+## Examine the assumption of normality.
+
+The residuals’ normal probability plot is used to confirm that the residuals are normally distributed.
+
+```{r, fig.height=4, fig.width=4}
+plot(res.aov3, 2)
+```
+
+## Examine the assumption of normality.
+
+The Shapiro-Wilk test on the ANOVA residuals, which finds no evidence of normality violation, supports the previous conclusion.
+
+```{r}
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov3)
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+```
+
+## Linear Regression
+
+Now we will briefly cover linear regression. I will use a little notation here so some of the commands are easier to put in the proper context.
+
+$$
+y_i = \alpha + \beta x_i + \varepsilon_i 
+$$
+where:
+
+* $y_i$ is the outcome for person i
+* $\alpha$ is the intercept
+* $\beta$ is the slope
+* $x_i$ is the predictor for person i
+* $\varepsilon_i$ is the residual variation for person i
+
+## Linear Regression
+
+The `R` version of the regression model is:
+
+```
+y ~ x
+```
+
+where: 
+
+* y is your outcome
+* x is/are your predictor(s)
+
+## Linear Regression
+
+For a linear regression, when the predictor is binary this is the same as a t-test:
+
+```{r}
+fit = lm(avg ~ line, data = op)
+fit
+```
+
+'(Intercept)' is $\alpha$
+
+'linepurpleAverage' is $\beta$
+
+
+## Linear Regression
+
+Categorical variables will be converted to dummy variables in linear regression, i.e., lineorangeAverage indicates whether the data point belongs to orange, linepurpleAverage indicates whether the data point belongs to purple, indicator for green will be automatically determined after we know orange and purple.
+
+```{r}
+fit = lm(avg ~ line, data = opg)
+fit
+```
+The `summary` command gets all the additional information (p-values, t-statistics, r-square) that you usually want from a regression.
+
+## Linear Regression
+
+```{r}
+sfit <- summary(fit)
+sfit
+```
+
+## Coefficients
+
+The coefficients from a summary are the coefficients, standard errors, t-statistics, and p-values for all the estimates.
+
+```{r}
+names(sfit)
+```
+
+```{r}
+sfit$coef
+```
+
+## Linear Regression
+
+We can `tidy` linear models as well and it gives us all of this in a tibble:
+
+```{r}
+tidy(fit)
+```
+
+## Linear Regression {.smaller}
+
+The `confint` argument allows for confidence intervals
+```{r}
+tidy(fit, conf.int = TRUE)
+```
+
+## Example {.smaller}
+
+Let’s look at an example using the Kaggle car auction data. We’ll look at vehicle odometer value by vehicle age:
+
+```{r, message = FALSE}
+cars = read_csv("kaggleCarAuction.csv", 
+                col_types = cols(VehBCost = col_double()))
+head(cars)
+```
+
+## Example
+
+```{r}
+fit = lm(VehOdo ~ VehicleAge, data = cars)
+summary(fit)
+```
+
+## Visualization {.smaller}
+
+```{r, fig.height=4, fig.width=8}
+par(mfrow=c(1,2))
+plot(VehOdo ~ VehicleAge, data=cars, pch = 19,
+col = scales::alpha("black", 0.05), xlab = "Vehicle Age (Yrs)")
+abline(fit, col = "red", lwd=2)
+boxplot(VehOdo ~ VehicleAge, data=cars, varwidth=TRUE)
+abline(fit, col="red", lwd=2)
+```
+
+## Linear Regression
+
+Note that you can have more than 1 predictor in regression models. The explanation for each slope is the effect on the outcome of a one-unit change in the predictor while holding all other predictors constant
+
+```{r}
+fit2 = lm(VehOdo ~ IsBadBuy + VehicleAge, data = cars)
+tidy(fit2)
+```
+
+
+## Linear Regression: Interactions
+
+The `*` does interactions, which means:
+$$
+y_i = \alpha + \beta_{1} x_{i1} + \beta_{2} x_{i2} + \beta_{3} x_{i1}x_{i2} + \varepsilon_i 
+$$
+
+```{r}
+fit3 = lm(VehOdo ~ IsBadBuy * VehicleAge, data = cars)
+tidy(fit3)  
+```
+
+
+## Linear Regression: Interactions
+
+You can take out main effects with minus, which means
+$$
+y_i = \alpha + \beta_{2} x_{i2} + \beta_{3} x_{i1}x_{i2} + \varepsilon_i 
+$$
+if we treat IsBadBuy as $x_{i1}$
+
+```{r}
+fit4 = lm(VehOdo ~ IsBadBuy * VehicleAge - IsBadBuy , data = cars)
+tidy(fit4)  
+```
+
+## Linear Regression {.smaller}
+
+Factors (Categorical) get special treatment in regression models - lowest level of the factor is the comparison group, and all other factors are relative to its values.
+
+```{r}
+fit5 = lm(VehOdo ~ factor(TopThreeAmericanName), data = cars)
+summary(fit5) 
+```
+
+## Linear Regression
+
+Some additional generic functions that are useful when working with linear regression models are
+
+* `residuals` - extract the residuals from a model fit
+* `predict` - make predictions based on a model fit. Can make predictions for data used to fit the model (returning the fitted values) or for a new observation.
+
+## Residual {.smaller}
+
+We can extract the residuals for calculations or residual plots for diagnostics. For example, let's make a histogram of the residuals from the cars model `fit3`.
+
+```{r, fig.height=4, fig.width=8}
+fit3.res = data.frame(resid = residuals(fit3))
+library(ggplot2)
+ggplot(fit3.res, aes(x = resid)) + geom_histogram()
+```
+
+## Prediction
+
+We can also predict the mean odometer reading for a car that is a bad buy and is 4 years old using the model `fit3`, we create a data.frame containing these two columns with the values 1 (is a bad buy) and 4 to use with predict.
+
+```{r}
+new_data = data.frame(IsBadBuy = 1, VehicleAge = 4)
+predict(fit3, newdata = new_data, interval = "confidence")
+```
+
+## Logistic Regression and GLMs
+
+Generalized Linear Models (GLMs) allow for fitting regressions for non-continuous/normal outcomes. The `glm` has similar syntax to the `lm` command. Logistic regression is one example. See `?family` for more details.
+
+In a (simple) logistic regression model, we have a binary response `Y` and a predictor `x`. It is assumed that given the predictor, $Y ~ \text{Bernoulli}(p(x))$ where $p(x)=P(Y=1|x)$ and
+$$
+log(\frac{P(Y=1|x)}{1-P(Y=1|x)})=\beta_{0}+\beta_{1}x
+$$
+That is the log-odds of success changes linearly with `x`. It then follows that $e^{\beta_1}$ is the odds ratio of success for a one unit increase in `x`.
+
+## Logistic Regression and GLMs {.smaller}
+
+```{r}
+glmfit = glm(IsBadBuy ~ VehOdo + VehicleAge, data=cars, family = binomial())
+summary(glmfit)  
+```
+
+## Tidying GLMs {.smaller}
+
+We can `tidy` this model fit object as well. Use `conf.int = TRUE` to get confidence intervals for the regression coefficients.
+
+```{r}
+tidy(glmfit, conf.int = TRUE)
+```
+
+## Tidying GLMs
+
+Use the `conf.int = TRUE` and `exponentiate = TRUE` to get the confidence intervals and point estimates for the odds ratios.
+
+```{r}
+tidy(glmfit, conf.int = TRUE, exponentiate = TRUE)
+```
+
+## Logistic Regression 
+
+Note the coefficients are on the original scale, we must exponentiate them for odds ratios:
+
+```{r}
+exp(coef(glmfit))
+```
+
+## Chi-squared tests
+
+`chisq.test()` performs chi-squared contingency table tests and goodness-of-fit tests.
+
+```
+chisq.test(x, y = NULL, correct = TRUE,
+           p = rep(1/length(x), length(x)), rescale.p = FALSE,
+           simulate.p.value = FALSE, B = 2000)
+```
+
+```{r}
+tab = table(cars$IsBadBuy, cars$IsOnlineSale)
+tab
+```
+
+## Chi-squared tests
+
+You can pass in a table object (such as `tab` here)
+```{r}
+cq = chisq.test(tab)
+cq
+names(cq)
+cq$p.value
+```
+
+## Fisher's Exact test
+
+`fisher.test()` performs contingency table test using the hypogeometric distribution (used for small sample sizes).
+
+```
+fisher.test(x, y = NULL, workspace = 200000, hybrid = FALSE,
+            control = list(), or = 1, alternative = "two.sided",
+            conf.int = TRUE, conf.level = 0.95,
+            simulate.p.value = FALSE, B = 2000)
+```
+
+```{r}
+fisher.test(tab)
+```
+
+## Sampling
+
+If you want to only plot a subset of the data
+
+```{r, fig.height=4, fig.width=7}
+samp.cars = sample_n(cars, size = 10000)
+samp.cars = sample_frac(cars, size = 0.2)
+ggplot(aes(x = VehBCost, y = VehOdo), 
+       data = samp.cars) + geom_point() 
+```
+
